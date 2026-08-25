@@ -1,127 +1,152 @@
 import { FunctionDeclaration, SchemaType } from "@google/generative-ai";
-import { ExpenseClassification, LedgerEntry } from "../types/receipt";
+import { LedgerEntry, ClassificationResult } from "../types/receipt";
+import { v4 as uuidv4 } from "uuid";
 
 export const classifyExpenseDeclaration: FunctionDeclaration = {
     name: "classifyExpense",
-    description: "Classifies a transaction into a business expense category and determines Ethiopian VAT and withholding tax applicability.",
+    description: "Classifies a business expense under Ethiopian tax law, determining VAT applicability, withholding tax, and the expense category.",
     parameters: {
         type: SchemaType.OBJECT,
         properties: {
             category: {
                 type: SchemaType.STRING,
-                description: "The expense category (e.g. Office Supplies, Utilities, Meals & Entertainment, Travel & Transport, Professional Services, Rent, Fuel, Inventory).",
+                description: "Expense category. E.g. Healthcare, Food & Beverage, Transport, Office Supplies, IT Equipment, General.",
             },
             vatRate: {
                 type: SchemaType.NUMBER,
-                description: "Standard Ethiopian VAT rate (0.15 for 15%) or 0 if exempt.",
+                description: "Applicable VAT rate as a decimal. 0.15 for standard rate, 0 for exempt.",
             },
-            isWithholdingApplicable: {
+            vatExempt: {
                 type: SchemaType.BOOLEAN,
-                description: "True if withholding tax applies (services >= 3000 ETB or goods >= 10000 ETB under Ethiopian tax proclamation).",
+                description: "True if this expense is VAT exempt under Ethiopian law.",
             },
-            confidenceScore: {
+            withholdingApplicable: {
+                type: SchemaType.BOOLEAN,
+                description: "True if withholding tax of 2% applies. Applies to goods over 10,000 ETB or services over 3,000 ETB.",
+            },
+            withholdingRate: {
                 type: SchemaType.NUMBER,
-                description: "Confidence level between 0.0 and 1.0 regarding this classification.",
+                description: "Withholding rate as a decimal. 0.02 if applicable, 0 otherwise.",
             },
             reasoning: {
                 type: SchemaType.STRING,
-                description: "Brief rationale explaining why this category and tax treatment were chosen.",
+                description: "One sentence explaining the tax classification under Ethiopian tax law.",
             },
         },
-        required: ["category", "vatRate", "isWithholdingApplicable", "confidenceScore", "reasoning"],
+        required: ["category", "vatRate", "vatExempt", "withholdingApplicable", "withholdingRate", "reasoning"],
     },
 };
 
 export const logToLedgerDeclaration: FunctionDeclaration = {
     name: "logToLedger",
-    description: "Logs a verified, high-confidence receipt/invoice entry directly into the general accounting ledger.",
+    description: "Commits a fully verified and classified receipt entry to the accounting ledger. Only call this when confidence is 0.85 or above and all required fields are present.",
     parameters: {
         type: SchemaType.OBJECT,
         properties: {
-            receiptId: {
-                type: SchemaType.STRING,
-                description: "Unique identifier for the receipt.",
-            },
             vendorName: {
                 type: SchemaType.STRING,
-                description: "Name of the merchant or service provider.",
+                description: "The name of the vendor or service provider from the receipt.",
             },
             date: {
                 type: SchemaType.STRING,
-                description: "Transaction date in YYYY-MM-DD format.",
+                description: "The date on the receipt in YYYY-MM-DD format.",
             },
-            category: {
-                type: SchemaType.STRING,
-                description: "Accounting category for this expense.",
-            },
-            amount: {
+            totalAmount: {
                 type: SchemaType.NUMBER,
-                description: "Total monetary amount paid or invoiced.",
+                description: "The total amount paid, as shown on the receipt.",
             },
             currency: {
                 type: SchemaType.STRING,
-                description: "Three-letter currency code, e.g. ETB, USD.",
+                description: "Currency code. Use ETB for Ethiopian Birr.",
+            },
+            category: {
+                type: SchemaType.STRING,
+                description: "The classified expense category.",
             },
             vatAmount: {
                 type: SchemaType.NUMBER,
-                description: "Total VAT amount included in the receipt.",
+                description: "The VAT amount. 0 if VAT exempt.",
+            },
+            withholdingAmount: {
+                type: SchemaType.NUMBER,
+                description: "The withholding tax amount. 0 if not applicable.",
+            },
+            tinNumber: {
+                type: SchemaType.STRING,
+                description: "The vendor TIN number from the receipt if visible.",
+            },
+            fiscalReceiptNumber: {
+                type: SchemaType.STRING,
+                description: "The ERCA fiscal machine receipt number if visible.",
             },
         },
-        required: ["receiptId", "vendorName", "date", "category", "amount", "currency", "vatAmount"],
+        required: ["vendorName", "date", "totalAmount", "currency", "category", "vatAmount", "withholdingAmount"],
     },
 };
 
 export const flagForReviewDeclaration: FunctionDeclaration = {
     name: "flagForReview",
-    description: "Flags an ambiguous, low-confidence, or damaged receipt/invoice for human manual review instead of guessing.",
+    description: "Flags a receipt for human review when confidence is too low, fields are missing, or data is ambiguous. Never guess — always flag instead.",
     parameters: {
         type: SchemaType.OBJECT,
         properties: {
-            receiptId: {
-                type: SchemaType.STRING,
-                description: "Unique identifier for the receipt.",
-            },
             vendorName: {
                 type: SchemaType.STRING,
-                description: "Vendor name if identifiable, or 'Unknown'.",
+                description: "Best guess at vendor name, or 'Unknown Vendor' if not readable.",
             },
-            detectedAmount: {
+            date: {
+                type: SchemaType.STRING,
+                description: "Best guess at date in YYYY-MM-DD format, or today's date if not readable.",
+            },
+            totalAmount: {
                 type: SchemaType.NUMBER,
-                description: "Estimated amount if partially readable, or 0.",
+                description: "Best guess at total amount, or 0 if not readable.",
+            },
+            currency: {
+                type: SchemaType.STRING,
+                description: "Currency code, or ETB if unknown.",
+            },
+            category: {
+                type: SchemaType.STRING,
+                description: "Best guess at category, or General if unknown.",
             },
             reviewReason: {
                 type: SchemaType.STRING,
-                description: "Specific reason why autonomous processing failed or is uncertain.",
-            },
-            suggestedAction: {
-                type: SchemaType.STRING,
-                description: "Recommended next step for the human accountant.",
+                description: "Clear explanation of why this receipt needs human review.",
             },
         },
-        required: ["receiptId", "reviewReason", "suggestedAction"],
+        required: ["vendorName", "date", "totalAmount", "currency", "category", "reviewReason"],
     },
 };
 
-export function executeClassifyExpense(args: Record<string, any>): ExpenseClassification {
+export function executeClassifyExpense(args: Record<string, any>): ClassificationResult {
     return {
-        category: String(args.category || "General Expense"),
-        vatRate: Number(args.vatRate ?? 0.15),
-        isWithholdingApplicable: Boolean(args.isWithholdingApplicable ?? false),
-        confidenceScore: Number(args.confidenceScore ?? 0.8),
-        reasoning: String(args.reasoning || "Classified according to standard rules."),
+        category: args.category ?? "General",
+        vatRate: args.vatRate ?? 0,
+        vatExempt: args.vatExempt ?? false,
+        withholdingApplicable: args.withholdingApplicable ?? false,
+        withholdingRate: args.withholdingRate ?? 0,
+        reasoning: args.reasoning ?? "No reasoning provided.",
     };
 }
 
 export function executeLogToLedger(args: Record<string, any>): LedgerEntry {
+    const totalAmount = Number(args.totalAmount) || 0;
+    const vatAmount = Number(args.vatAmount) || 0;
+    const withholdingAmount = Number(args.withholdingAmount) || 0;
+
     return {
-        id: "LEDGER-" + Math.random().toString(36).substring(2, 9).toUpperCase(),
-        receiptId: String(args.receiptId || "REC-001"),
-        vendorName: String(args.vendorName || "Unknown Vendor"),
-        date: String(args.date || new Date().toISOString().split("T")[0]),
-        category: String(args.category || "General"),
-        amount: Number(args.amount || 0),
-        currency: String(args.currency || "ETB"),
-        vatAmount: Number(args.vatAmount || 0),
+        id: uuidv4(),
+        receiptId: args.receiptId ?? "UNKNOWN",
+        vendorName: args.vendorName ?? "Unknown Vendor",
+        date: args.date ?? new Date().toISOString().split("T")[0],
+        category: args.category ?? "General",
+        amount: totalAmount,
+        currency: args.currency ?? "ETB",
+        vatAmount,
+        withholdingAmount,
+        tinNumber: args.tinNumber,
+        fiscalReceiptNumber: args.fiscalReceiptNumber,
         status: "auto_approved",
         createdAt: new Date().toISOString(),
     };
@@ -129,16 +154,17 @@ export function executeLogToLedger(args: Record<string, any>): LedgerEntry {
 
 export function executeFlagForReview(args: Record<string, any>): LedgerEntry {
     return {
-        id: "FLAG-" + Math.random().toString(36).substring(2, 9).toUpperCase(),
-        receiptId: String(args.receiptId || "REC-001"),
-        vendorName: String(args.vendorName || "Unknown Vendor"),
-        date: new Date().toISOString().split("T")[0],
-        category: "Unassigned - Pending Review",
-        amount: Number(args.detectedAmount || 0),
-        currency: "ETB",
+        id: uuidv4(),
+        receiptId: args.receiptId ?? "UNKNOWN",
+        vendorName: args.vendorName ?? "Unknown Vendor",
+        date: args.date ?? new Date().toISOString().split("T")[0],
+        category: args.category ?? "General",
+        amount: Number(args.totalAmount) || 0,
+        currency: args.currency ?? "ETB",
         vatAmount: 0,
+        withholdingAmount: 0,
         status: "pending_review",
-        reviewReason: String(args.reviewReason || "Flagged for manual inspection"),
+        reviewReason: args.reviewReason ?? "Flagged for review.",
         createdAt: new Date().toISOString(),
     };
 }

@@ -1,42 +1,20 @@
-export interface ReceiptItem {
-    description: string;
-    quantity: number;
-    unitPrice: number;
-    totalPrice: number;
-}
-
 export interface ExtractedReceiptData {
-    vendorName: string;
-    tinNumber?: string;
-    invoiceNumber?: string;
-    date: string;
-    currency: string;
-    items: ReceiptItem[];
-    subtotal: number;
-    taxAmount: number;
-    totalAmount: number;
+    vendorName?: string;
+    date?: string;
+    totalAmount?: number;
+    currency?: string;
+    taxAmount?: number;
     confidenceScore: number;
     rawText?: string;
 }
 
-export interface ExpenseClassification {
+export interface ClassificationResult {
     category: string;
     vatRate: number;
-    isWithholdingApplicable: boolean;
-    confidenceScore: number;
+    vatExempt: boolean;
+    withholdingApplicable: boolean;
+    withholdingRate: number;
     reasoning: string;
-}
-
-export type AgentActionStatus = "extracted" | "classified" | "logged" | "flagged_for_review";
-
-export interface AgentStepLog {
-    step: number;
-    timestamp: string;
-    toolCalled: string;
-    inputArgs: Record<string, unknown>;
-    outputResult: Record<string, unknown>;
-    status: AgentActionStatus;
-    notes?: string;
 }
 
 export interface LedgerEntry {
@@ -48,7 +26,20 @@ export interface LedgerEntry {
     amount: number;
     currency: string;
     vatAmount: number;
+    withholdingAmount?: number;
+    tinNumber?: string;
+    fiscalReceiptNumber?: string;
     status: "auto_approved" | "pending_review";
     reviewReason?: string;
     createdAt: string;
+}
+
+export interface AgentStepLog {
+    step: number;
+    timestamp: string;
+    toolCalled: string;
+    inputArgs?: Record<string, unknown>;
+    outputResult?: Record<string, unknown>;
+    status: "extracted" | "classified" | "logged" | "flagged_for_review";
+    notes?: string;
 }
