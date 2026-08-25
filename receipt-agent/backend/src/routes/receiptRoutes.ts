@@ -8,7 +8,6 @@ export const receiptRouter = Router();
 const storage = multer.memoryStorage();
 const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } });
 
-const apiKey = process.env.GEMINI_API_KEY!;
 
 receiptRouter.post(
     "/process",
@@ -19,6 +18,26 @@ receiptRouter.post(
             return;
         }
 
+        const allowedMimeTypes = [
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/webp",
+            "image/gif",
+            "image/heic",
+            "image/heif",
+            "application/pdf",
+        ];
+
+
+        if (!allowedMimeTypes.includes(req.file.mimetype)) {
+            res.status(415).json({
+                error: "Unsupported file format.",
+                details: `Received: ${req.file.mimetype}. Please upload JPG, PNG, WEBP, or PDF.`,
+            });
+            return;
+        }
+        const apiKey = process.env.GEMINI_API_KEY!;
         const receiptId = "REC-" + Date.now();
         const base64Image = req.file.buffer.toString("base64");
         const mimeType = req.file.mimetype;
@@ -32,9 +51,15 @@ receiptRouter.post(
                 steps: result.steps,
                 ledgerEntry: result.ledgerEntry,
             });
+
         } catch (error: any) {
+            console.error("=== AGENT ERROR ===");
+            console.error(error);
+            console.error("===================");
             res.status(500).json({ error: "Agent processing failed.", details: error.message });
         }
+
+
     }
 );
 

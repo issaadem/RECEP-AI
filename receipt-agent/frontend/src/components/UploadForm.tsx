@@ -1,16 +1,65 @@
 import { useRef, useState } from "react";
+import heic2any from "heic2any";
 
 interface UploadFormProps {
     onUpload: (file: File) => void;
     isProcessing: boolean;
 }
 
+const SUPPORTED_TYPES = [
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/heic",
+    "image/heif",
+    "application/pdf",
+];
+
 export function UploadForm({ onUpload, isProcessing }: UploadFormProps) {
     const [dragging, setDragging] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [isConverting, setIsConverting] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const handleFile = (file: File) => {
+    const handleFile = async (file: File) => {
+        const isHeic =
+            file.type === "image/heic" ||
+            file.type === "image/heif" ||
+            file.name.toLowerCase().endsWith(".heic") ||
+            file.name.toLowerCase().endsWith(".heif");
+
+        if (isHeic) {
+            setIsConverting(true);
+            try {
+                const convertedBlob = (await heic2any({
+                    blob: file,
+                    toType: "image/jpeg",
+                    quality: 0.9,
+                })) as Blob;
+
+                const convertedFile = new File(
+                    [convertedBlob],
+                    file.name.replace(/\.(heic|heif)$/i, ".jpg"),
+                    { type: "image/jpeg" }
+                );
+
+                setSelectedFile(convertedFile);
+            } catch (err) {
+                console.error("HEIC conversion failed:", err);
+                alert("Failed to convert iPhone HEIC photo. Please try a JPG or PNG.");
+            } finally {
+                setIsConverting(false);
+            }
+            return;
+        }
+
+        if (!SUPPORTED_TYPES.includes(file.type) && !file.name.toLowerCase().endsWith(".pdf")) {
+            alert("Unsupported file format: " + file.name + "\n\nPlease use JPG, PNG, HEIC, WEBP, or PDF.");
+            return;
+        }
+
         setSelectedFile(file);
     };
 
@@ -22,7 +71,7 @@ export function UploadForm({ onUpload, isProcessing }: UploadFormProps) {
     };
 
     const handleSubmit = () => {
-        if (selectedFile && !isProcessing) {
+        if (selectedFile && !isProcessing && !isConverting) {
             onUpload(selectedFile);
         }
     };
@@ -39,7 +88,7 @@ export function UploadForm({ onUpload, isProcessing }: UploadFormProps) {
                     </svg>
                 </div>
                 <h2>Upload Receipt</h2>
-                <p>Supports JPG, PNG, PDF — fiscal machine slips and invoices</p>
+                <p>Supports JPG, PNG, HEIC (iPhone), WEBP, PDF</p>
             </div>
 
             <div
@@ -53,11 +102,16 @@ export function UploadForm({ onUpload, isProcessing }: UploadFormProps) {
                     ref={inputRef}
                     type="file"
                     id="receipt-file-input"
-                    accept="image/*,application/pdf"
+                    accept="image/*,.heic,.heif,application/pdf"
                     style={{ display: "none" }}
                     onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
                 />
-                {selectedFile ? (
+                {isConverting ? (
+                    <div className="drop-hint">
+                        <span className="spinner" />
+                        <span>Converting iPhone HEIC to JPEG...</span>
+                    </div>
+                ) : selectedFile ? (
                     <div className="file-selected">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
                             <polyline points="20,6 9,17 4,12" />
@@ -79,11 +133,13 @@ export function UploadForm({ onUpload, isProcessing }: UploadFormProps) {
 
             <button
                 id="process-receipt-btn"
-                className={`process-btn ${isProcessing ? "loading" : ""}`}
+                className={`process-btn ${isProcessing || isConverting ? "loading" : ""}`}
                 onClick={handleSubmit}
-                disabled={!selectedFile || isProcessing}
+                disabled={!selectedFile || isProcessing || isConverting}
             >
-                {isProcessing ? (
+                {isConverting ? (
+                    <><span className="spinner" /> Converting HEIC...</>
+                ) : isProcessing ? (
                     <><span className="spinner" /> Analyzing with Gemini...</>
                 ) : (
                     <>
